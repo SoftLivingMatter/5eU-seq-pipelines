@@ -1,0 +1,4 @@
+GeneID  Chr     Start   End     Strand
+18S-3juncALT	U13369.1_human_ribosomal_DNA	5527	5537	-
+5.8S-ITS2left	U13369.1_human_ribosomal_DNA	6778	6786	-
+ITS2rightALT	U13369.1_human_ribosomal_DNA	6787	6792	-

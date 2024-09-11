@@ -1,0 +1,49 @@
+workdir: "/your/directory/here"
+
+outputs:
+  - end_cov
+  - cleavage
+  # - methyl
+
+# The directory to store log files for specific jobs
+log_dir: "log"
+
+junctions:  # paths to saf files for featurecounts.  Key is used in output name
+
+  allJunctions3: /path/to/assets/allJunctions3.saf
+  extraJunctions3b: /path/to/assets/extraJunctions3b.saf
+  extraJunctions3: /path/to/assets/extraJunctions3.saf
+
+# used to parse a sample and time from sample name
+cleavage_sample_regex: "{sample}_{time}min.*"
+# sample is replaced with .*, time with \d+
+# sample is expected before time
+
+# The directory where all reference genomes are stored.
+star_ref_dirs:
+  human: "/projects/BRANGWYNNE/tools/genomics/genomes/STAR/human_custom_transcripts/human_rDNA_U13369.1"
+  # hg38: "/projects/BRANGWYNNE/tools/genomics/genomes/STAR/hg38/GRCh38.p13_STAR"
+
+# reference files for methyl calling.  Keys must match star reference dirs
+methyl_positions:
+  human: "/path/to/assets/methyl_positions.txt"
+
+# can be relative to workdir or absolute
+fastqs: "your/directory/here/{sample}-read-{read}.fastq.gz"
+
+trimmomatic_base: "/path/to/Trimmomatic-0.39"
+
+paths:
+  slurm_output: "logs/slurm"
+  trimmed: "trim/{sample}-read-{read}-{trim}.fastq.gz"
+  mapped: "mapped/{reference}/{sample}"  # will have suffixes added
+  end_cov_sam: "end_cov/{reference}/{sample}.{reads}.sam"
+  end_cov: "end_cov/{reference}/{sample}.{reads}.bedgraph"
+  scores: "scores/{reference}_{method}.csv"
+  feature_counts: "feature_counts/{reference}/{junction}_{overlap}.txt"
+  overlaps: "overlaps/{reference}/{junction}_{filetype}.txt"
+
+containers:
+  bedtools: 'docker://quay.io/biocontainers/bedtools:2.24--1'
+  samtools: 'docker://biocontainers/samtools:v1.9-4-deb_cv1'
+  star: 'docker://quay.io/biocontainers/star:2.7.11a--h0033a41_0'

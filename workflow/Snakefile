@@ -1,0 +1,321 @@
+from pathlib import Path
+import pandas as pd
+
+scripts = Path(workflow.basedir) / 'scripts'
+
+configfile: "config/config.yaml"
+workdir: config['workdir']
+
+paths = config['paths']
+os.makedirs(paths['slurm_output'], exist_ok=True)
+
+# find samples and reads from fastq files
+wcs = glob_wildcards(config['fastqs'])
+
+samples = sorted(set(wcs.sample))
+print(f'Found {len(samples)} samples')
+reads = sorted(set(wcs.read))
+
+assert len(reads) == 2, f"Fastq files have too many reads, found {reads}"
+
+references = list(config['star_ref_dirs'].keys())
+
+output_map = {
+        'methyl': expand(
+            paths['scores'],
+            method='all_2methylPositions',
+            reference=config['methyl_positions'].keys(),
+            ),
+        'cleavage': expand(
+            paths['overlaps'],
+            reference=references,
+            junction=config['junctions'].keys(),
+            filetype=['raw', 'parsed'],
+            ),
+        'end_cov': expand(
+            paths['end_cov'],
+            reads=[
+                "read1only",
+                "read2only",
+                "3prime.read2only",
+                "allReads",
+                ],
+            sample=samples,
+            reference=references,
+            ),
+
+        }
+
+requested_outputs = []
+if config['outputs']:
+    requested_outputs = [output_map[out] for out in config['outputs']]
+
+localrules:
+    parse_overlap,
+
+rule all:
+    input:
+        expand(
+                paths['mapped'] + ".aligned.sorted.bam",
+                sample=samples,
+                reference=references,
+                ),
+        requested_outputs,
+
+rule trim:
+    input:
+        expand(config['fastqs'], read=reads, allow_missing=True),
+    output:
+        expand(
+                paths['trimmed'],
+                read=reads,  # order is important here!
+                trim=['trimmed', 'trimmed_Unpaired'],
+                allow_missing=True,
+            )
+    threads: 1
+    resources:
+        runtime=63,
+        mem_mb=4000
+    log:
+        config["log_dir"] + '/trimming/{sample}.trimmomatic.log'
+    shell:
+        "java -jar {config[trimmomatic_base]}/trimmomatic-0.39.jar PE "
+            "-threads {threads} "
+            "-phred33 "
+            "{input} "
+            "{output} "
+            "ILLUMINACLIP:{config[trimmomatic_base]}/adapters/Nextera2PE-PE-and-TruSeq3-PE.fa:2:30:10:6:true "
+            "LEADING:10 "
+            "TRAILING:10 "
+            "MINLEN:25 "
+            '2> {log}'
+
+def star_align_input(wildcards):
+    return {
+            'fastqs': expand(paths['trimmed'], read=reads, trim='trimmed', allow_missing=True),
+            'reference': config["star_ref_dirs"][wildcards.reference],
+            }
+
+rule star_align:
+    input:
+        unpack(star_align_input)
+    params:
+        prefix=paths['mapped']
+    output:
+        multiext(paths['mapped'],
+                     ".SJ.out.tab",
+                     ".Unmapped.out.mate1",
+                     ".Unmapped.out.mate2",
+                     ),
+        sam=pipe(paths['mapped'] + ".Aligned.out.sam"),
+    threads: 1
+    resources:
+        runtime=63,
+        mem_mb=16000,
+    container: config['containers']['star']
+    log:
+        f'{config["log_dir"]}/{paths["mapped"]}.Log.out',
+        f'{config["log_dir"]}/{paths["mapped"]}.Log.final.out',
+        f'{config["log_dir"]}/{paths["mapped"]}.Log.progress.out',
+    shell:
+        "STAR "
+            "--outFileNamePrefix {params.prefix}. "
+            "--genomeDir {input.reference} "
+            "--readFilesIn {input.fastqs} "
+            "--readFilesCommand zcat "
+            "--runThreadN {threads} "
+            "--outFilterMatchNminOverLread 0.10 "
+            "--outFilterIntronMotifs None "
+            "--alignIntronMax 50000 "
+            "--alignMatesGapMax 1000 "
+            "--genomeLoad NoSharedMemory "
+            "--alignIntronMin 80 "
+            "--alignSJDBoverhangMin 5 "
+            "--sjdbOverhang 100 "
+            "--outSAMunmapped Within "
+            "--outReadsUnmapped Fastx \n"
+        'mv {params.prefix}.Log.out {config[log_dir]}/{params.prefix}.Log.out\n'
+        'mv {params.prefix}.Log.final.out {config[log_dir]}/{params.prefix}.Log.final.out\n'
+        'mv {params.prefix}.Log.progress.out {config[log_dir]}/{params.prefix}.Log.progress.out\n'
+
+rule filter_bam:
+    input:
+        sam=paths['mapped'] + ".Aligned.out.sam"
+    output:
+        mapq=paths['mapped'] + ".aligned.mapq20.bam",
+        sort=paths['mapped'] + ".aligned.sorted.bam",
+        index=paths['mapped'] + ".aligned.sorted.bam.bai"
+    log:
+        config["log_dir"] + "/filter_bam_{reference}/{sample}.log"
+    resources:
+        runtime=63,
+        mem_mb=4000
+    container: config['containers']['samtools']
+    shell:
+        "samtools view -m 3G -@ {threads} -bSq 20 {input.sam} > {output.mapq} 2> {log};"
+        "samtools sort -m 3G -@ {threads} {output.mapq} -o {output.sort};"
+        "samtools index {output.sort}"
+
+def end_analysis_options(wildcards, tool):
+    read_info = wildcards.reads.split('.')
+    if len(read_info) == 1:
+        reads = read_info[0]
+        prime = None
+    else:
+        prime, reads = read_info
+    if tool == 'samtools':
+        if reads == 'read1only':
+            return '-f 64'
+        if reads == 'read2only':
+            return '-f 128'
+        if reads == 'allReads':
+            return ''
+        raise ValueError(f'Unable to match read: {reads}')
+    if tool == 'bedtools':
+        if prime == '3prime':
+            return '-3'
+        if prime == '5prime':
+            return '-5'
+        if prime is None:
+            return ''
+        raise ValueError(f'Unable to match prime value: {prime}')
+
+rule end_analysis_samtools:
+    input:
+        bam=paths['mapped'] + ".aligned.sorted.bam"
+    output:
+        pipe(paths['end_cov_sam'])
+    threads:
+        1
+    resources:
+        runtime=63,
+        mem_mb=2000
+    wildcard_constraints:
+        sample='[^.]+'
+    params:
+        options=lambda wildcards: end_analysis_options(wildcards, 'samtools'),
+    container: config['containers']['samtools']
+    shell:
+        "samtools view -b "
+            "{params.options} "
+            "{input.bam} "
+            "> {output} "
+
+rule end_analysis_bedtools:
+    input:
+        paths['end_cov_sam']
+    output:
+        paths['end_cov']
+    threads:
+        1
+    wildcard_constraints:
+        sample='[^.]+'
+    params:
+        options=lambda wildcards: end_analysis_options(wildcards, 'bedtools')
+    container: config['containers']['bedtools']
+    shell:
+        "bedtools genomecov "
+            "{params.options} "
+            "-ibam {input} -bg "
+            "> {output}"
+
+def ribometh_score_input(wildcards):
+    return {
+            'bedgraphs': expand(paths['end_cov'], reads="5prime.read1only",
+                           sample=samples, reference=wildcards.reference),
+            'script': scripts / "rna_mod_score.py",
+            'positions': config['methyl_positions'][wildcards.reference],
+        }
+
+rule ribometh_score:
+    input:
+        unpack(ribometh_score_input)
+    output:
+        expand(paths['scores'], method='all_2methylPositions', allow_missing=True)
+    resources:
+        runtime=63,
+        mem_mb=2000
+    shell:
+        'python {input.script} '
+            '--column-name methylPosition '
+            '--exclude-score {input.positions} '
+            '--query-sites {input.positions} '
+            '--output {output} '
+            '{input.bedgraphs}'
+
+def count_junctions_input(wildcards):
+    return {
+            'bams': expand(
+                paths['mapped'] + ".aligned.sorted.bam",
+                sample=samples,
+                allow_missing=True,
+                ),
+            'junction': config['junctions'][wildcards.junction],
+            }
+
+rule count_junctions:
+    input: unpack(count_junctions_input)
+    output:
+        paths['feature_counts'],
+        paths['feature_counts'] + '.summary',
+    params:
+        overlap_option= lambda wildcards: '-O' if wildcards.overlap == 'overlap' else ''
+    conda:
+        "envs/subread.yaml"
+    resources:
+        runtime=63,
+        mem_mb=2000
+    shell:
+        'featureCounts '
+            '{params.overlap_option} '
+            '-F SAF '
+            '-a {input.junction} '
+            '-o {output[0]} '
+            '{input.bams} '
+
+rule parse_overlap:
+    input:
+        expand(paths['feature_counts'], overlap=['overlap', 'nooverlap'], allow_missing=True),
+    output:
+        expand(paths['overlaps'], filetype=['raw', 'parsed'], allow_missing=True),
+    run:
+        overlap = pd.read_csv(input[0], comment='#', sep='\t') 
+        overlap = pd.melt(
+                overlap,
+                id_vars=overlap.columns[:4],  # retain geneid, chr, start, end
+                value_vars=overlap.columns[6:],  # paths along columns
+                var_name='full_path',
+                value_name='overlap')  # counts from values
+
+        no_overlap = pd.read_csv(input[1], comment='#', sep='\t')
+        no_overlap = pd.melt(
+                no_overlap,
+                id_vars=no_overlap.columns[:4],  # retain geneid, chr, start, end
+                value_vars=no_overlap.columns[6:],  # paths along columns
+                var_name='full_path',
+                value_name='no_overlap')  # counts from values
+        
+        # merge on everything but counts
+        data = overlap.merge(no_overlap, on=overlap.columns[:5].to_list())
+
+        data['fraction_spanning'] = data['no_overlap'] / data['overlap']
+        # remove path and suffix from full path
+        data['full_path'] = data['full_path'].str.extract(r'.*/(.*)\.aligned\.sorted\.bam')
+        data.rename(columns={'full_path': 'full_sample'}, inplace=True)
+
+        data.sort_values(['Geneid', 'full_sample']).to_csv(output[0], index=False)
+
+        parsed = data['full_sample'].str.extract(
+                config['cleavage_sample_regex'].format(
+                    sample=r'(?P<sample>.*)',
+                    time=r'(?P<time>\d+)',
+                    )
+                )
+
+        if parsed.isna().any(axis=None):
+            print('Unable to extract sample and time from the following:')
+            print(data.loc[parsed.isna().any(axis=1), 'full_sample'].unique())
+
+        # add in parsed output, remove na
+        data = pd.concat([data, parsed], axis=1).dropna()
+        data.sort_values(['Geneid', 'sample', 'time']).to_csv(output[1], index=False)
