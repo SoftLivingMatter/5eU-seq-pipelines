@@ -1,4 +1,5 @@
 # 5eU-seq-pipelines
+[![DOI](https://zenodo.org/badge/855379253.svg)](https://doi.org/10.5281/zenodo.14908465)
 
 A collection of analyses for EU enriched sequence experiments, including
 cleavage measurements and modifications.  Execution is specified as a snakemake
