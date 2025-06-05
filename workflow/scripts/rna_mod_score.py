@@ -124,5 +124,7 @@ if __name__ == '__main__':
         remove_from_score=args.exclude_score,
         limit_to_sites=args.limit_sites,
     )
+    # TODO: instead of a list/generator, pass in a dataframe with position as first column
+    # if another column is present, add it to the result with the column name "name"
     result = dataset.query_positions(int(line) for line in args.query_sites)
     result.to_csv(args.output, index=False)

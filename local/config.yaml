@@ -10,4 +10,4 @@ printshellcmds: true
 singularity-prefix: "~/snakemake_images"
 conda-prefix: "~/snakemake_images"
 
-cores: 10
+cores: 20

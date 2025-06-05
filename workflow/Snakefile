@@ -91,16 +91,30 @@ rule trim:
             '2> {log}'
 
 def star_align_input(wildcards):
+    index = references.index(wildcards.reference)
+    if index == 0:
+        fastqs = expand(paths['trimmed'], read=reads, trim='trimmed', allow_missing=True)
+    else:
+        fastqs = expand(paths['mapped']+".Unmapped.out.{suffix}",
+                        reference=references[index-1],
+                        suffix=['mate1', 'mate2'],
+                        allow_missing=True)
     return {
-            'fastqs': expand(paths['trimmed'], read=reads, trim='trimmed', allow_missing=True),
+            'fastqs': fastqs,
             'reference': config["star_ref_dirs"][wildcards.reference],
             }
+
+def star_align_params(wildcards):
+    if references.index(wildcards.reference) == 0:
+        return '--readFilesCommand zcat'
+    return ''
 
 rule star_align:
     input:
         unpack(star_align_input)
     params:
-        prefix=paths['mapped']
+        prefix=paths['mapped'],
+        read_files=star_align_params,
     output:
         multiext(paths['mapped'],
                      ".SJ.out.tab",
@@ -122,7 +136,7 @@ rule star_align:
             "--outFileNamePrefix {params.prefix}. "
             "--genomeDir {input.reference} "
             "--readFilesIn {input.fastqs} "
-            "--readFilesCommand zcat "
+            "{params.read_files} "
             "--runThreadN {threads} "
             "--outFilterMatchNminOverLread 0.04 "
             "--outFilterIntronMotifs None "
@@ -268,6 +282,7 @@ rule count_junctions:
     shell:
         'featureCounts '
             '{params.overlap_option} '
+            '-p '
             '-F SAF '
             '-a {input.junction} '
             '-o {output[0]} '
