@@ -13,12 +13,12 @@ class RNAModDataset():
         ):
         self.position_name = position_name
         self.remove_from_score = (
-            set(int(pos) for pos in remove_from_score)
+            set(pd.read_csv(remove_from_score, header=None)[0])
             if remove_from_score else None
         )
         # all T positions in rDNA
         self.limit_to_sites = (
-            set(int(pos) for pos in limit_to_sites)
+            set(pd.read_csv(limit_to_sites, header=None)[0])
             if limit_to_sites else None
         )
 
@@ -47,6 +47,13 @@ class RNAModDataset():
                 }
 
         def query_file(file, data, position):
+            if len(position) == 2:
+                name = position[1]
+                position = position[0]
+            else:
+                name = None
+                position = position[0]
+
             row = data.index[data['position'] == position]
             if len(row) != 1:
                 return empty
@@ -91,15 +98,19 @@ class RNAModDataset():
                 return empty
 
             weighted_average = (sub_data['counts'] * sub_data['weight']).sum() / sub_data['weight'].sum()
-            return {
+            result = {
                 'fileName': file,
                 self.position_name: position,
                 'ScoreB': abs(data.iloc[row]['counts'] - weighted_average) / (data.iloc[row]['counts'] + 1),
                 'ScoreC': 1 - (data.iloc[row]['counts'] / (weighted_average)),
             }
+            if name:
+                result['name'] = name
+
+            return result
             
         return pd.DataFrame([query_file(file, data, position)
-            for position in positions
+            for ind, position in positions.iterrows()
             for file, data in self.data.items()
         ]).dropna().astype({self.position_name: int})  # remove positions that aren't found
 
@@ -124,7 +135,5 @@ if __name__ == '__main__':
         remove_from_score=args.exclude_score,
         limit_to_sites=args.limit_sites,
     )
-    # TODO: instead of a list/generator, pass in a dataframe with position as first column
-    # if another column is present, add it to the result with the column name "name"
-    result = dataset.query_positions(int(line) for line in args.query_sites)
+    result = dataset.query_positions(pd.read_csv(args.query_sites, header=None))
     result.to_csv(args.output, index=False)
