@@ -27,9 +27,9 @@ snakemake --profile local
 Installation should take a few minutes.
 
 ## Overview
-Three types of analyses can be accomplished with the workflow, end_cov, cleavage,
-methyl.  They are included together due to the overlap between the analyses,
-it is unlikely all will be run on the same input files.
+Four types of analyses can be accomplished with the workflow, end_cov, cleavage,
+methyl and region_counts.  They are included together due to the overlap
+between the analyses, it is unlikely all will be run on the same input files.
 
 In all cases, fastqs are trimmed with trimmomatic in the rule `trim`.  Trimmed
 fastqs are then aligned to the specified refrerence using STAR and filtered for
@@ -47,6 +47,10 @@ sample name and time can be parsed from the file name, using the config setting
 Analysis of methyl scores use the `scripts/rna_mod_score.py` function
 which analyzes output of end coverage files to estimate a scores representing
 the likelihood of a modification at that position.
+
+Region count analysis is performed with bedtools intersect.  As input, it requires
+a bed file containing the regions to consider.  The final output combines the
+results from all samples which are added as a separate column.
 
 ## Inference of modification sites
 ### 2OMe

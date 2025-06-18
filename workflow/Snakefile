@@ -43,7 +43,10 @@ output_map = {
             sample=samples,
             reference=references,
             ),
-
+        'region_count': expand(
+            paths['region_count_summary'],
+            reference=config['region_count'].keys(),
+            ),
         }
 
 requested_outputs = []
@@ -52,6 +55,8 @@ if config['outputs']:
 
 localrules:
     parse_overlap,
+    run_region_counts,
+    summarize_region_counts,
 
 rule all:
     input:
@@ -334,3 +339,35 @@ rule parse_overlap:
         # add in parsed output, remove na
         data = pd.concat([data, parsed], axis=1).dropna()
         data.sort_values(['Geneid', 'sample', 'time']).to_csv(output[1], index=False)
+
+rule run_region_counts:
+    input:
+        bam=paths['mapped'] + ".aligned.sorted.bam",
+        bedfile=lambda wildcards: config['region_count'][wildcards.reference]
+    output:
+        temp(paths['region_count'])
+    container: config['containers']['bedtools']
+    params:
+        sed_command=lambda wildcards: (
+                's/$/'  # replace the end of each line
+                f'\t{wildcards.sample}/'  # with new column
+                )
+    shell:
+        'bedtools intersect '
+            '-a {input.bedfile} '
+            '-b {input.bam} '
+            '-c '
+        "| sed '{params.sed_command}' "  # add in the sample
+            '> {output} '
+
+rule summarize_region_counts:
+    input:
+        lambda wildcards: expand(
+            paths['region_count'],
+            sample=samples,
+            allow_missing=True,
+        )
+    output:
+        paths['region_count_summary']
+    shell:
+        'cat {input} > {output}'

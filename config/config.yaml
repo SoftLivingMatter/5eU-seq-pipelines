@@ -3,6 +3,7 @@ workdir: "/your/directory/here"
 outputs:
   - end_cov
   - cleavage
+  # - region_count
   # - methyl
 
 # The directory to store log files for specific jobs
@@ -31,9 +32,12 @@ methyl_positions:
   human: "/path/to/assets/methyl_positions.txt"
 
 # can be relative to workdir or absolute
-fastqs: "your/directory/here/{sample}-read-{read}.fastq.gz"
+fastqs: "/your/directory/here/{sample}-read-{read}.fastq.gz"
 
 trimmomatic_base: "/path/to/Trimmomatic-0.39"
+
+region_count:
+  human: '/path/to/regions.bed'
 
 paths:
   slurm_output: "logs/slurm"
@@ -44,6 +48,8 @@ paths:
   scores: "scores/{reference}_{method}.csv"
   feature_counts: "feature_counts/{reference}/{junction}_{overlap}.txt"
   overlaps: "overlaps/{reference}/{junction}_{filetype}.txt"
+  region_count: "region_count/{reference}/{sample}.counts"
+  region_count_summary: "region_count/{reference}.counts"
 
 containers:
   bedtools: 'docker://quay.io/biocontainers/bedtools:2.24--1'
