@@ -92,7 +92,7 @@ rule trim:
             "ILLUMINACLIP:{config[trimmomatic_base]}/adapters/Nextera2PE-PE-and-TruSeq3-PE.fa:2:30:10:6:true "
             "LEADING:10 "
             "TRAILING:10 "
-            "MINLEN:25 "
+            "MINLEN:35 "
             '2> {log}'
 
 def star_align_input(wildcards):
