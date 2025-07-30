@@ -26,4 +26,4 @@ latency-wait: 120  # wait 2 minutes for missing files before raising exception
 jobs: 250  # maximum jobs to run at once
 max-jobs-per-second: 1
 max-status-checks-per-second: 10
-local-cores: 4  # maximum local jobs to run
+local-cores: 10  # maximum local jobs to run

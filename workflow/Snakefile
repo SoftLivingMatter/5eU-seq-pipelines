@@ -57,6 +57,11 @@ localrules:
     parse_overlap,
     run_region_counts,
     summarize_region_counts,
+    end_analysis_samtools,
+    end_analysis_bedtools,
+    ribometh_score,
+    count_junctions,
+    trim,
 
 rule all:
     input:
@@ -129,7 +134,7 @@ rule star_align:
         sam=pipe(paths['mapped'] + ".Aligned.out.sam"),
     threads: 1
     resources:
-        runtime=63,
+        runtime=63 if config['runtime'] == 'short' else 200,
         mem_mb=16000,
     container: config['containers']['star']
     log:
@@ -206,9 +211,6 @@ rule end_analysis_samtools:
         pipe(paths['end_cov_sam'])
     threads:
         1
-    resources:
-        runtime=63,
-        mem_mb=2000
     wildcard_constraints:
         sample='[^.]+'
     params:
