@@ -102,7 +102,7 @@ rule trim:
 
 def star_align_input(wildcards):
     index = references.index(wildcards.reference)
-    if index == 0:
+    if index == 0 or config['alignment_strategy'] == 'parallel':
         fastqs = expand(paths['trimmed'], read=reads, trim='trimmed', allow_missing=True)
     else:
         fastqs = expand(paths['mapped']+".Unmapped.out.{suffix}",

@@ -21,7 +21,12 @@ cleavage_sample_regex: "{sample}_{time}min.*"
 # sample is replaced with .*, time with \d+
 # sample is expected before time
 
-# The directory where all reference genomes are stored.
+# given multiple reference directories, how to align each reference
+# parallel: use the trimmed fastq files as input for every reference
+# sequential: use the unpaired sequences from the previous reference to
+# align to the next reference
+alignment_strategy: 'parallel'
+# The directory where reference genomes are stored.
 star_ref_dirs:
   human: "/projects/BRANGWYNNE/tools/genomics/genomes/STAR/human_custom_transcripts/human_rDNA_U13369.1"
   # hg38: "/projects/BRANGWYNNE/tools/genomics/genomes/STAR/hg38/GRCh38.p13_STAR"
