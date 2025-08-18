@@ -8,7 +8,7 @@ outputs:
 
 # The directory to store log files for specific jobs
 log_dir: "logs"
-runtime: "short"  # or long
+runtime: "short"  # short or long
 
 junctions:  # paths to saf files for featurecounts.  Key is used in output name
 

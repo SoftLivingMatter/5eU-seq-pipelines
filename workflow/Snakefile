@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+from datetime import datetime
 
 scripts = Path(workflow.basedir) / 'scripts'
 
@@ -54,6 +55,7 @@ if config['outputs']:
     requested_outputs = [output_map[out] for out in config['outputs']]
 
 localrules:
+    log_config,
     parse_overlap,
     run_region_counts,
     summarize_region_counts,
@@ -66,11 +68,26 @@ localrules:
 rule all:
     input:
         expand(
+                f"{config['log_dir']}/config_{{date}}.yaml",
+                date=datetime.now().strftime('%Y.%m.%d'),
+                ),
+        expand(
                 paths['mapped'] + ".aligned.sorted.bam",
                 sample=samples,
                 reference=references,
                 ),
         requested_outputs,
+
+rule log_config:
+    '''
+    Copy config and place in logs folder with the date run
+    '''
+    output:
+        f"{config['log_dir']}/config_{{date}}.yaml"
+    run:
+        import yaml
+        with open(output[0], 'w') as outfile:
+            yaml.dump(config, outfile, default_flow_style=False)
 
 rule trim:
     input:
