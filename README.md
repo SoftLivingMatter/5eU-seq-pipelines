@@ -60,15 +60,6 @@ Be careful for +1 offset in IGV (look at the counts and nucleotide numbers in
 bedgraph to confirm that the nucleotide you identified with the dip in IGV is
 correct)
 
-### PseudoU: visualize the bam files in IGV (must also download the bam.bai
-file), you can find this in the align_bam output folder and look for sites with
-high proportion of deletions. Alternatively, you can look at the genes.tsv
-output file and set a cutoff for sites that have, for example, more than 20%
-deletion fraction. Sites identified must be uridines!
-Cutoff can be more lenient or strict depending on amount of noise tolerable For
-some organisms, some sites at least are known (e.g. worm) so should positive
-control check those.
-
 Important note: when trying to find sites annotated in the
 literature in IGV, the nucleotide numbering may not make sense! this is because
 there are offsets as the genomes get updated. So (for example) site 2727 in the
