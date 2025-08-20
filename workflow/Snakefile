@@ -225,7 +225,7 @@ rule end_analysis_samtools:
     input:
         bam=paths['mapped'] + ".aligned.sorted.bam"
     output:
-        pipe(paths['end_cov_sam'])
+        temp(paths['end_cov_sam'])
     threads:
         1
     wildcard_constraints:
@@ -244,6 +244,7 @@ rule end_analysis_bedtools:
         paths['end_cov_sam']
     output:
         paths['end_cov']
+    priority: 1  # consume temp sam file asap
     threads:
         1
     wildcard_constraints:
