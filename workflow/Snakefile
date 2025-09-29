@@ -32,7 +32,11 @@ output_map = {
             reference=references,
             junction=config['junctions'].keys(),
             filetype=['raw', 'parsed'],
-            ),
+            ) + expand(
+                paths['bedtools_summary'],
+                reference=references,
+                junction=config['bedtool_junctions'].keys(),
+                ),
         'end_cov': expand(
             paths['end_cov'],
             reads=[
@@ -64,6 +68,7 @@ localrules:
     ribometh_score,
     count_junctions,
     trim,
+    bedtools_overlap_summary,
 
 rule all:
     input:
@@ -178,6 +183,7 @@ rule star_align:
         'mv {params.prefix}.Log.out {config[log_dir]}/{params.prefix}.Log.out\n'
         'mv {params.prefix}.Log.final.out {config[log_dir]}/{params.prefix}.Log.final.out\n'
         'mv {params.prefix}.Log.progress.out {config[log_dir]}/{params.prefix}.Log.progress.out\n'
+        'rm -r {params.prefix}._STARtmp \n'
 
 rule filter_bam:
     input:
@@ -193,8 +199,8 @@ rule filter_bam:
         mem_mb=4000
     container: config['containers']['samtools']
     shell:
-        "samtools view -m 3G -@ {threads} -bSq 20 {input.sam} > {output.mapq} 2> {log};"
-        "samtools sort -m 3G -@ {threads} {output.mapq} -o {output.sort};"
+        "samtools view -m 3G -@ {threads} -bSq 20 {input.sam} > {output.mapq} 2> {log} \n"
+        "samtools sort -m 3G -@ {threads} {output.mapq} -o {output.sort} \n"
         "samtools index {output.sort}"
 
 def end_analysis_options(wildcards, tool):
@@ -359,6 +365,77 @@ rule parse_overlap:
         # add in parsed output, remove na
         data = pd.concat([data, parsed], axis=1).dropna()
         data.sort_values(['Geneid', 'sample', 'time']).to_csv(output[1], index=False)
+
+rule query_sort:
+    input:
+        paths['mapped'] + ".aligned.sorted.bam",
+    output:
+        temp(paths['mapped'] + ".aligned.nsorted.bam"),
+    resources:
+        runtime=63,
+        mem_mb=4000
+    container: config['containers']['samtools']
+    shell:
+        "samtools sort -n -m 3G -@ {threads} {input} -o {output}"
+
+rule bam_to_bed:
+    input:
+        paths['mapped'] + ".aligned.nsorted.bam",
+    output:
+        temp(paths['bedtools_sample_bed']),
+    container: config['containers']['bedtools']
+    resources:
+        runtime=63,
+        mem_mb=4000
+    params:
+        awk_script=(
+                '{'
+                    'if($1!=$4) next;'  # skip pairs mapping to different chromosomes
+                    's = ($2 < $5 ? $2 : $5);'  # fragment start (min of the two read starts)
+                    'e = ($3 > $6 ? $3 : $6);'  # fragment end   (max of the two read ends)
+                    'print $1"\t"s"\t"e"\t"$7"\t"$8"\t"$9;'
+                '}'
+                )
+    shell:
+        "bedtools bamtobed -bedpe -i {input} "
+        "| awk '{params.awk_script}' > {output}"
+
+rule bedtools_overlap:
+    input:
+        bam=paths['bedtools_sample_bed'],
+        junction=lambda wildcards: config['bedtool_junctions'][wildcards.junction],
+    output:
+        paths['bedtools_counts'],
+    container: config['containers']['bedtools']
+    resources:
+        runtime=63,
+        mem_mb=4000
+    shell:
+        'bedtools intersect '
+            '-c '
+            '-a {input.junction} '
+            '-b {input.bam} '
+            '> {output} '
+
+rule bedtools_overlap_summary:
+    input:
+        expand(paths['bedtools_counts'], sample=samples, allow_missing=True)
+    output:
+        paths['bedtools_summary']
+    run:
+        with open(output[0], 'w') as outfile:
+            outfile.write('chr\tstart\tend\tsite\t')
+            outfile.write('\t'.join(samples) + '\n')
+            line_info = [
+                    line.split()[:4]
+                    for line in open(input[0])
+                    ]
+            counts = [
+                    [line.split()[-1] for line in open(file)]
+                     for file in input
+                    ]
+            for info, *cnts in zip(line_info, *counts):
+                outfile.write('\t'.join(info + cnts) + '\n')
 
 rule run_region_counts:
     input:
