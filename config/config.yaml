@@ -8,13 +8,20 @@ outputs:
 
 # The directory to store log files for specific jobs
 log_dir: "logs"
-runtime: "short"  # short or long
+runtime: # default is short
+  human: "short"  # or long
 
 junctions:  # paths to saf files for featurecounts.  Key is used in output name
+  human: 
+    allJunctions3:    /projects/BRANGWYNNE/projects/genomics/primary_data/2023/11_November/20231110_MiseqV3/data/04_end_analysis/subread_junctions/allJunctions3.saf
+    extraJunctions3b: /projects/BRANGWYNNE/projects/genomics/primary_data/2023/11_November/20231110_MiseqV3/data/04_end_analysis/subread_junctions/extraJunctions3b.saf
+    extraJunctions3:  /projects/BRANGWYNNE/projects/genomics/primary_data/2023/11_November/20231110_MiseqV3/data/04_end_analysis/subread_junctions/extraJunctions3.saf
+    5.8S: /projects/BRANGWYNNE/projects/genomics/primary_data/2025/08_August/20250818_Azenta_Nova/MYCspikeIn_Analysis/58S.saf
+    ITS1: /projects/BRANGWYNNE/projects/genomics/primary_data/2025/08_August/20250818_Azenta_Nova/MYCspikeIn_Analysis/ITS1.saf
 
-  allJunctions3: /path/to/assets/allJunctions3.saf
-  extraJunctions3b: /path/to/assets/extraJunctions3b.saf
-  extraJunctions3: /path/to/assets/extraJunctions3.saf
+bedtool_junctions:  # paths to saf files for featurecounts.  Key is used in output name
+  human: 
+    allJunctions3: allJunctions3.bed
 
 # used to parse a sample and time from sample name
 cleavage_sample_regex: "{sample}_{time}min.*"
@@ -54,6 +61,11 @@ paths:
   scores: "scores/{reference}_{method}.csv"
   feature_counts: "feature_counts/{reference}/{junction}_{overlap}.txt"
   overlaps: "overlaps/{reference}/{junction}_{filetype}.txt"
+
+  bedtools_sample_bed: "bedtools_counts/{reference}/beds/{sample}.bed"
+  bedtools_counts: "bedtools_counts/{reference}/counts/{junction}/{sample}.bed"
+  bedtools_summary: "bedtools_counts/{reference}/{junction}_summary.tsv"
+
   region_count: "region_count/{reference}/{sample}.counts"
   region_count_summary: "region_count/{reference}.counts"
 

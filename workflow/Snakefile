@@ -21,22 +21,39 @@ assert len(reads) == 2, f"Fastq files have too many reads, found {reads}"
 
 references = list(config['star_ref_dirs'].keys())
 
+junction_df = pd.DataFrame(
+        [(k, v) for k, vs in config['junctions'].items() for v in vs.keys()],
+        columns=['reference', 'junction'])
+
+feature_count_outputs = expand(
+            expand(
+                paths['overlaps'],
+                zip,
+                reference=junction_df['reference'],
+                junction=junction_df['junction'],
+                allow_missing=True,
+                ),
+            filetype=['raw', 'parsed'],
+            )
+
+junction_df = pd.DataFrame(
+        [(k, v) for k, vs in config['bedtool_junctions'].items() for v in vs.keys()],
+        columns=['reference', 'junction'])
+bedtools_outputs = expand(
+                paths['bedtools_summary'],
+                zip,
+                reference=junction_df['reference'],
+                junction=junction_df['junction'],
+                )
+
+
 output_map = {
         'methyl': expand(
             paths['scores'],
             method='all_2methylPositions',
             reference=config['methyl_positions'].keys(),
             ),
-        'cleavage': expand(
-            paths['overlaps'],
-            reference=references,
-            junction=config['junctions'].keys(),
-            filetype=['raw', 'parsed'],
-            ) + expand(
-                paths['bedtools_summary'],
-                reference=references,
-                junction=config['bedtool_junctions'].keys(),
-                ),
+        'cleavage': feature_count_outputs + bedtools_outputs,
         'end_cov': expand(
             paths['end_cov'],
             reads=[
@@ -68,6 +85,9 @@ localrules:
     ribometh_score,
     count_junctions,
     trim,
+    query_sort,
+    bam_to_bed,
+    bedtools_overlap,
     bedtools_overlap_summary,
 
 rule all:
@@ -156,8 +176,8 @@ rule star_align:
         sam=pipe(paths['mapped'] + ".Aligned.out.sam"),
     threads: 1
     resources:
-        runtime=63 if config['runtime'] == 'short' else 200,
-        mem_mb=16000,
+        runtime=lambda wildcards: 63 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 200,
+        mem_mb=lambda wildcards: 16000 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 48000,
     container: config['containers']['star']
     log:
         f'{config["log_dir"]}/{paths["mapped"]}.Log.out',
@@ -183,7 +203,6 @@ rule star_align:
         'mv {params.prefix}.Log.out {config[log_dir]}/{params.prefix}.Log.out\n'
         'mv {params.prefix}.Log.final.out {config[log_dir]}/{params.prefix}.Log.final.out\n'
         'mv {params.prefix}.Log.progress.out {config[log_dir]}/{params.prefix}.Log.progress.out\n'
-        'rm -r {params.prefix}._STARtmp \n'
 
 rule filter_bam:
     input:
@@ -295,7 +314,7 @@ def count_junctions_input(wildcards):
                 sample=samples,
                 allow_missing=True,
                 ),
-            'junction': config['junctions'][wildcards.junction],
+            'junction': config['junctions'][wildcards.reference][wildcards.junction],
             }
 
 rule count_junctions:
@@ -403,7 +422,7 @@ rule bam_to_bed:
 rule bedtools_overlap:
     input:
         bam=paths['bedtools_sample_bed'],
-        junction=lambda wildcards: config['bedtool_junctions'][wildcards.junction],
+        junction=lambda wildcards: config['bedtool_junctions'][wildcards.reference][wildcards.junction],
     output:
         paths['bedtools_counts'],
     container: config['containers']['bedtools']
