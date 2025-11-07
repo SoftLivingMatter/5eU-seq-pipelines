@@ -157,7 +157,8 @@ def star_align_input(wildcards):
             }
 
 def star_align_params(wildcards):
-    if references.index(wildcards.reference) == 0:
+    def star_align_params(wildcards, input):
+    if input.fastqs[0].endswith('.gz'):
         return '--readFilesCommand zcat'
     return ''
 
