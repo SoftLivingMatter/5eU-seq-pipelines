@@ -4,7 +4,8 @@ from datetime import datetime
 
 scripts = Path(workflow.basedir) / 'scripts'
 
-configfile: "config/config.yaml"
+configfile: "config/lww-spikein.yaml"
+# configfile: "config/config.yaml"
 workdir: config['workdir']
 
 paths = config['paths']
@@ -22,7 +23,7 @@ assert len(reads) == 2, f"Fastq files have too many reads, found {reads}"
 references = list(config['star_ref_dirs'].keys())
 
 junction_df = pd.DataFrame(
-        [(k, v) for k, vs in config['junctions'].items() for v in vs.keys()],
+        [(k, v) for k, vs in config.get('junctions', {}).items() for v in vs.keys()],
         columns=['reference', 'junction'])
 
 feature_count_outputs = expand(
@@ -37,7 +38,7 @@ feature_count_outputs = expand(
             )
 
 junction_df = pd.DataFrame(
-        [(k, v) for k, vs in config['bedtool_junctions'].items() for v in vs.keys()],
+        [(k, v) for k, vs in config.get('bedtool_junctions', {}).items() for v in vs.keys()],
         columns=['reference', 'junction'])
 bedtools_outputs = expand(
                 paths['bedtools_summary'],
@@ -51,7 +52,7 @@ output_map = {
         'methyl': expand(
             paths['scores'],
             method='all_2methylPositions',
-            reference=config['methyl_positions'].keys(),
+            reference=config.get('methyl_positions', {}).keys(),
             ),
         'cleavage': feature_count_outputs + bedtools_outputs,
         'end_cov': expand(
@@ -67,7 +68,7 @@ output_map = {
             ),
         'region_count': expand(
             paths['region_count_summary'],
-            reference=config['region_count'].keys(),
+            reference=config.get('region_count', {}).keys(),
             ),
         }
 
@@ -156,8 +157,7 @@ def star_align_input(wildcards):
             'reference': config["star_ref_dirs"][wildcards.reference],
             }
 
-def star_align_params(wildcards):
-    def star_align_params(wildcards, input):
+def star_align_params(wildcards, input):
     if input.fastqs[0].endswith('.gz'):
         return '--readFilesCommand zcat'
     return ''
@@ -174,10 +174,10 @@ rule star_align:
                      ".Unmapped.out.mate1",
                      ".Unmapped.out.mate2",
                      ),
-        sam=pipe(paths['mapped'] + ".Aligned.out.sam"),
+        bam=paths['mapped'] + ".Aligned.out.bam",
     threads: 1
     resources:
-        runtime=lambda wildcards: 63 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 200,
+        runtime=lambda wildcards: 2400 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 200,
         mem_mb=lambda wildcards: 16000 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 48000,
     container: config['containers']['star']
     log:
@@ -185,12 +185,14 @@ rule star_align:
         f'{config["log_dir"]}/{paths["mapped"]}.Log.final.out',
         f'{config["log_dir"]}/{paths["mapped"]}.Log.progress.out',
     shell:
+        # TODO: if this fails, you recently added the outSAMtype and made id not a pipe
         "STAR "
             "--outFileNamePrefix {params.prefix}. "
             "--genomeDir {input.reference} "
             "--readFilesIn {input.fastqs} "
             "{params.read_files} "
             "--runThreadN {threads} "
+            "--outSAMtype BAM "
             "--outFilterMatchNminOverLread 0.04 "
             "--outFilterIntronMotifs None "
             "--alignIntronMax 1 "
@@ -207,7 +209,7 @@ rule star_align:
 
 rule filter_bam:
     input:
-        sam=paths['mapped'] + ".Aligned.out.sam"
+        sam=paths['mapped'] + ".Aligned.out.bam"
     output:
         mapq=paths['mapped'] + ".aligned.mapq20.bam",
         sort=paths['mapped'] + ".aligned.sorted.bam",
