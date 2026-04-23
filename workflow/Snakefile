@@ -4,8 +4,7 @@ from datetime import datetime
 
 scripts = Path(workflow.basedir) / 'scripts'
 
-configfile: "config/lww-spikein.yaml"
-# configfile: "config/config.yaml"
+configfile: "config/config.yaml"
 workdir: config['workdir']
 
 paths = config['paths']
@@ -90,6 +89,7 @@ localrules:
     bam_to_bed,
     bedtools_overlap,
     bedtools_overlap_summary,
+    filter_bam
 
 rule all:
     input:
@@ -185,14 +185,13 @@ rule star_align:
         f'{config["log_dir"]}/{paths["mapped"]}.Log.final.out',
         f'{config["log_dir"]}/{paths["mapped"]}.Log.progress.out',
     shell:
-        # TODO: if this fails, you recently added the outSAMtype and made id not a pipe
         "STAR "
             "--outFileNamePrefix {params.prefix}. "
             "--genomeDir {input.reference} "
             "--readFilesIn {input.fastqs} "
             "{params.read_files} "
             "--runThreadN {threads} "
-            "--outSAMtype BAM "
+            "--outSAMtype BAM Unsorted "
             "--outFilterMatchNminOverLread 0.04 "
             "--outFilterIntronMotifs None "
             "--alignIntronMax 1 "

@@ -9,6 +9,7 @@ printshellcmds: true
 # Alternatively you can set the shadow-prefix for the entire .snakemake dir
 singularity-prefix: "~/snakemake_images"
 conda-prefix: "~/snakemake_images"
+conda-frontend: conda
 
 # cluster specific settings
 cluster: "sbatch \
