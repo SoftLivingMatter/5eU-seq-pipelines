@@ -4,7 +4,7 @@ from datetime import datetime
 
 scripts = Path(workflow.basedir) / 'scripts'
 
-configfile: "config/config.yaml"
+configfile: "config/config_oxidation.yaml"
 workdir: config['workdir']
 
 paths = config['paths']
@@ -69,6 +69,10 @@ output_map = {
             paths['region_count_summary'],
             reference=config.get('region_count', {}).keys(),
             ),
+        'freebayes': expand(
+            paths['freebayes'],
+            reference=config.get('star_ref_dirs', {}).keys(),
+            ),
         }
 
 requested_outputs = []
@@ -77,6 +81,7 @@ if config['outputs']:
 
 localrules:
     log_config,
+    multiqc,
     parse_overlap,
     run_region_counts,
     summarize_region_counts,
@@ -103,6 +108,7 @@ rule all:
                 reference=references,
                 ),
         requested_outputs,
+        paths['multiqc'],
 
 rule log_config:
     '''
@@ -114,6 +120,48 @@ rule log_config:
         import yaml
         with open(output[0], 'w') as outfile:
             yaml.dump(config, outfile, default_flow_style=False)
+
+def fastq_mv_cmds(wildcards, input, output):
+    # this assumes the input and output expands are the same order, and ext is last
+    opt = iter(output)
+    # this python groups the infile with the two outfiles
+    result = []
+    for infile, outfile1, outfile2 in zip(input, opt, opt):
+        infile = Path(infile).name
+        # get filename like fastqc
+        infile = infile.removesuffix('.gz')
+        infile = infile.removesuffix('.fastq')
+        infile = infile.removesuffix('.fq')
+        # get extensions
+        outfile1_ext = Path(outfile1).suffix
+        outfile2_ext = Path(outfile2).suffix
+        # move outputs to expected location
+        result.append(f'mv "${{TEMP_DIR}}/{infile}_fastqc{outfile1_ext}" "{outfile1}"')
+        result.append(f'mv "${{TEMP_DIR}}/{infile}_fastqc{outfile2_ext}" "{outfile2}"')
+    return '\n'.join(result)
+
+rule fastqc:
+    input:
+        lambda wildcards: expand(config['fastqs'], read=reads, allow_missing=True)
+    output:
+        expand(paths['fastqc'], read=reads, ext=('html', 'zip'), allow_missing=True)
+    container: config['containers']['fastqc']
+    params:
+        mv_cmds=fastq_mv_cmds
+    threads:
+        1
+    resources:
+        runtime=120,
+        mem_mb=2000
+    shell:
+        'TEMP_DIR="$(mktemp -d)"\n'  # keep each sample in a different temp dir
+        'trap \'rm -rf -- "$TEMP_DIR"\' EXIT \n'  # cleanup temp dir on exit
+        'fastqc '
+            '--threads {threads} '
+            '--outdir "$TEMP_DIR" '
+            '{input}\n'  # run fastqc
+        '{params.mv_cmds}\n'  # move outputs
+
 
 rule trim:
     input:
@@ -168,6 +216,7 @@ rule star_align:
     params:
         prefix=paths['mapped'],
         read_files=star_align_params,
+        read_group=lambda wildcards: f'--outSAMattrRGline ID:{wildcards.sample} SM:{wildcards.sample}'
     output:
         multiext(paths['mapped'],
                      ".SJ.out.tab",
@@ -190,6 +239,7 @@ rule star_align:
             "--genomeDir {input.reference} "
             "--readFilesIn {input.fastqs} "
             "{params.read_files} "
+            "{params.read_group} "
             "--runThreadN {threads} "
             "--outSAMtype BAM Unsorted "
             "--outFilterMatchNminOverLread 0.04 "
@@ -489,3 +539,48 @@ rule summarize_region_counts:
         paths['region_count_summary']
     shell:
         'cat {input} > {output}'
+
+def freebayes_input(wildcards):
+    reference = config['star_ref_dirs'][wildcards.reference] + '.fa'
+    if 'freebayes_references' in config:
+        reference = config['freebayes_references'].get(wildcards.reference, reference)
+    return {
+            'reference': reference,
+            'bams': expand(
+                paths['mapped'] + ".aligned.sorted.bam",
+                sample=samples,
+                reference=wildcards.reference,
+                ),
+            }
+
+rule freebayes:
+    input:
+        unpack(freebayes_input)
+    output:
+        paths['freebayes']
+    container: config['containers']['freebayes']
+    threads:
+        1
+    resources:
+        runtime=240,
+        mem_mb=8000
+    shell:
+        'freebayes '
+            '-f {input.reference} '
+            '-F 0.001 -X -C 1 --min-coverage 200 '
+            '{input.bams} > {output}'
+
+rule multiqc:
+    input:
+        #needs to be the last file produced in the pipeline 
+        requested_outputs,
+        expand(paths['fastqc'], sample=samples, read=reads, ext='html')
+    output:
+        paths['multiqc']
+    params:
+        outdir=Path(paths['multiqc']).parent
+    container: config['containers']['multiqc']
+    shell: 
+        "rm -rf {params.outdir}/* \n"  # clean up previous executions
+        "multiqc . -o {params.outdir}"
+
