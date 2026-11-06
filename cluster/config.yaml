@@ -19,7 +19,7 @@ cluster: "sbatch \
             --output={config[paths][slurm_output]}/%x-%A \
             --job-name={rule} \
             --parsable"
-cluster-status: "/home/tcomi/projects/sprite2.0-pipeline/cluster/slurm-status.py"
+cluster-status: "cluster/slurm-status.py"
 cluster-cancel: scancel
 cluster-cancel-nargs: 50
 latency-wait: 120  # wait 2 minutes for missing files before raising exception

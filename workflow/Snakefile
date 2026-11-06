@@ -69,6 +69,14 @@ output_map = {
             paths['region_count_summary'],
             reference=config.get('region_count', {}).keys(),
             ),
+        'freebayes': expand(
+            paths['freebayes'],
+            reference=config.get('star_ref_dirs', {}).keys(),
+            ),
+        'mpileup': expand(
+            paths['mpileup_summary'],
+            reference=config.get('star_ref_dirs', {}).keys(),
+            ),
         }
 
 requested_outputs = []
@@ -77,6 +85,7 @@ if config['outputs']:
 
 localrules:
     log_config,
+    multiqc,
     parse_overlap,
     run_region_counts,
     summarize_region_counts,
@@ -84,12 +93,13 @@ localrules:
     end_analysis_bedtools,
     ribometh_score,
     count_junctions,
-    trim,
     query_sort,
     bam_to_bed,
     bedtools_overlap,
     bedtools_overlap_summary,
-    filter_bam
+    filter_bam,
+    parse_mpileup,
+    combine_mpileup
 
 rule all:
     input:
@@ -103,6 +113,7 @@ rule all:
                 reference=references,
                 ),
         requested_outputs,
+        paths['multiqc'],
 
 rule log_config:
     '''
@@ -114,6 +125,48 @@ rule log_config:
         import yaml
         with open(output[0], 'w') as outfile:
             yaml.dump(config, outfile, default_flow_style=False)
+
+def fastq_mv_cmds(wildcards, input, output):
+    # this assumes the input and output expands are the same order, and ext is last
+    opt = iter(output)
+    # this python groups the infile with the two outfiles
+    result = []
+    for infile, outfile1, outfile2 in zip(input, opt, opt):
+        infile = Path(infile).name
+        # get filename like fastqc
+        infile = infile.removesuffix('.gz')
+        infile = infile.removesuffix('.fastq')
+        infile = infile.removesuffix('.fq')
+        # get extensions
+        outfile1_ext = Path(outfile1).suffix
+        outfile2_ext = Path(outfile2).suffix
+        # move outputs to expected location
+        result.append(f'mv "${{TEMP_DIR}}/{infile}_fastqc{outfile1_ext}" "{outfile1}"')
+        result.append(f'mv "${{TEMP_DIR}}/{infile}_fastqc{outfile2_ext}" "{outfile2}"')
+    return '\n'.join(result)
+
+rule fastqc:
+    input:
+        lambda wildcards: expand(config['fastqs'], read=reads, allow_missing=True)
+    output:
+        expand(paths['fastqc'], read=reads, ext=('html', 'zip'), allow_missing=True)
+    container: config['containers']['fastqc']
+    params:
+        mv_cmds=fastq_mv_cmds
+    threads:
+        1
+    resources:
+        runtime=120,
+        mem_mb=2000
+    shell:
+        'TEMP_DIR="$(mktemp -d)"\n'  # keep each sample in a different temp dir
+        'trap \'rm -rf -- "$TEMP_DIR"\' EXIT \n'  # cleanup temp dir on exit
+        'fastqc '
+            '--threads {threads} '
+            '--outdir "$TEMP_DIR" '
+            '{input}\n'  # run fastqc
+        '{params.mv_cmds}\n'  # move outputs
+
 
 rule trim:
     input:
@@ -127,7 +180,7 @@ rule trim:
             )
     threads: 1
     resources:
-        runtime=63,
+        runtime=240,
         mem_mb=4000
     log:
         config["log_dir"] + '/trimming/{sample}.trimmomatic.log'
@@ -168,6 +221,7 @@ rule star_align:
     params:
         prefix=paths['mapped'],
         read_files=star_align_params,
+        read_group=lambda wildcards: f'--outSAMattrRGline ID:{wildcards.sample} SM:{wildcards.sample}'
     output:
         multiext(paths['mapped'],
                      ".SJ.out.tab",
@@ -177,7 +231,7 @@ rule star_align:
         bam=paths['mapped'] + ".Aligned.out.bam",
     threads: 1
     resources:
-        runtime=lambda wildcards: 2400 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 200,
+        runtime=lambda wildcards: 240 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 2000,
         mem_mb=lambda wildcards: 16000 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 48000,
     container: config['containers']['star']
     log:
@@ -190,6 +244,7 @@ rule star_align:
             "--genomeDir {input.reference} "
             "--readFilesIn {input.fastqs} "
             "{params.read_files} "
+            "{params.read_group} "
             "--runThreadN {threads} "
             "--outSAMtype BAM Unsorted "
             "--outFilterMatchNminOverLread 0.04 "
@@ -216,7 +271,7 @@ rule filter_bam:
     log:
         config["log_dir"] + "/filter_bam_{reference}/{sample}.log"
     resources:
-        runtime=63,
+        runtime=240,
         mem_mb=4000
     container: config['containers']['samtools']
     shell:
@@ -489,3 +544,132 @@ rule summarize_region_counts:
         paths['region_count_summary']
     shell:
         'cat {input} > {output}'
+
+def freebayes_input(wildcards):
+    reference = config['star_ref_dirs'][wildcards.reference] + '.fa'
+    if 'freebayes_references' in config:
+        reference = config['freebayes_references'].get(wildcards.reference, reference)
+    return {
+            'reference': reference,
+            'bams': expand(
+                paths['mapped'] + ".aligned.sorted.bam",
+                sample=samples,
+                reference=wildcards.reference,
+                ),
+            }
+
+rule freebayes:
+    input:
+        unpack(freebayes_input)
+    output:
+        paths['freebayes']
+    container: config['containers']['freebayes']
+    threads:
+        1
+    resources:
+        runtime=240,
+        mem_mb=8000
+    shell:
+        'freebayes '
+            '-f {input.reference} '
+            '-F 0.001 -X -C 1 --min-coverage 200 '
+            '{input.bams} > {output}'
+
+def mpileup_reference(wildcards):
+    reference = config['star_ref_dirs'][wildcards.reference] + '.fa'
+    if 'freebayes_references' in config:
+        reference = config['freebayes_references'].get(wildcards.reference, reference)
+    return reference
+
+rule mpileup:
+    input:
+        bam=paths['mapped'] + ".aligned.sorted.bam",
+        reference=mpileup_reference,
+    output:
+        temp(paths['mpileup'])
+    container: config['containers']['samtools']
+    threads:
+        1
+    resources:
+        runtime=240,
+        mem_mb=8000
+    shell:
+        'samtools mpileup '
+            '-f {input.reference} '
+            '--no-BAQ -q 0 -Q 0 -d 1000000 -B '
+            '{input.bam} | gzip > {output}'
+
+rule parse_mpileup:
+    input:
+        paths['mpileup']
+    output:
+        paths['mpileup_parsed']
+    threads:
+        1
+    resources:
+        runtime=60,
+        mem_mb=2000
+    shell:
+        'python {scripts}/parse_mpileup.py --input {input} --output {output}'
+
+rule combine_mpileup:
+    input:
+        expand(paths['mpileup_parsed'], sample=samples, allow_missing=True)
+    output:
+        paths['mpileup_summary']
+    run:
+        import pandas as pd
+
+        threshold = config.get('min_mean_depth', 100)
+
+        dfs = []
+        for sample, path in zip(samples, input):
+            df = pd.read_csv(path, sep='\t')
+            df['sample'] = sample
+            dfs.append(df)
+
+        long = pd.concat(dfs, ignore_index=True)
+
+        # Pivot depth: rows=(chr,pos), cols=all samples, fill missing with 0
+        depth_pivot = long.pivot_table(
+            index=['chr', 'pos'], columns='sample',
+            values='depth', aggfunc='first', fill_value=0
+        )
+        # Ensure every expected sample is a column (handles empty TSVs)
+        depth_pivot = depth_pivot.reindex(columns=samples, fill_value=0)
+        mean_depth = depth_pivot.mean(axis=1)
+        passing_idx = mean_depth[mean_depth >= threshold].index
+
+        # Keep only rows belonging to passing sites
+        long_idx = long.set_index(['chr', 'pos'])
+        passing_long = long[long_idx.index.isin(passing_idx)]
+
+        # Build full (site x sample) template so every sample has a row per site
+        passing_sites = passing_long[['chr', 'pos', 'ref']].drop_duplicates()
+        template = passing_sites.merge(pd.DataFrame({'sample': list(samples)}), how='cross')
+
+        # Left-join actual data; fill zeros where a sample had no coverage
+        result = template.merge(
+            passing_long[['chr', 'pos', 'sample', 'depth', 'T_count', 'G_to_T_freq']],
+            on=['chr', 'pos', 'sample'],
+            how='left'
+        ).fillna({'depth': 0, 'T_count': 0, 'G_to_T_freq': 0.0})
+
+        result[['chr', 'pos', 'ref', 'depth', 'T_count', 'G_to_T_freq', 'sample']].to_csv(
+            output[0], sep='\t', index=False
+        )
+
+rule multiqc:
+    input:
+        #needs to be the last file produced in the pipeline 
+        requested_outputs,
+        expand(paths['fastqc'], sample=samples, read=reads, ext='html')
+    output:
+        paths['multiqc']
+    params:
+        outdir=Path(paths['multiqc']).parent
+    container: config['containers']['multiqc']
+    shell: 
+        "rm -rf {params.outdir}/* \n"  # clean up previous executions
+        "multiqc . -o {params.outdir}"
+
