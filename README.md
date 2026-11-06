@@ -27,8 +27,8 @@ snakemake --profile local
 Installation should take a few minutes.
 
 ## Overview
-Four types of analyses can be accomplished with the workflow, end_cov, cleavage,
-methyl and region_counts.  They are included together due to the overlap
+Several types of analyses can be accomplished with the workflow: end_cov,
+cleavage, methyl, region_count, freebayes and mpileup (oxidation).  They are included together due to the overlap
 between the analyses, it is unlikely all will be run on the same input files.
 
 In all cases, fastqs are trimmed with trimmomatic in the rule `trim`.  Trimmed
@@ -51,6 +51,17 @@ the likelihood of a modification at that position.
 Region count analysis is performed with bedtools intersect.  As input, it requires
 a bed file containing the regions to consider.  The final output combines the
 results from all samples which are added as a separate column.
+
+The mpileup analysis measures guanine oxidation (8-oxoG), which is read out as
+G→T transversions.  Filtered bams are piled up with `samtools mpileup` (no BAQ,
+no quality filters) against the reference fasta (the STAR reference directory
+plus `.fa`, or the entry in `freebayes_references` if set).
+`scripts/parse_mpileup.py` then reports, for every reference G, the depth, the
+number of T calls and the G→T frequency (T / (matches + A + C + T)).  Finally,
+the samples are combined into `mpileup/{reference}/summary.tsv` with one row per
+site and sample.  Only sites with a mean depth across all samples of at least
+`min_mean_depth` (default 100) are kept; samples without coverage at a kept site
+are filled with zeros.  Enable it by adding `mpileup` to `outputs`.
 
 ## Inference of modification sites
 ### 2OMe

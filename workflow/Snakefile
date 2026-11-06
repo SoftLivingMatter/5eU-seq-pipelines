@@ -4,7 +4,7 @@ from datetime import datetime
 
 scripts = Path(workflow.basedir) / 'scripts'
 
-configfile: "config/config_oxidation.yaml"
+configfile: "config/config.yaml"
 workdir: config['workdir']
 
 paths = config['paths']
@@ -73,6 +73,10 @@ output_map = {
             paths['freebayes'],
             reference=config.get('star_ref_dirs', {}).keys(),
             ),
+        'mpileup': expand(
+            paths['mpileup_summary'],
+            reference=config.get('star_ref_dirs', {}).keys(),
+            ),
         }
 
 requested_outputs = []
@@ -89,12 +93,13 @@ localrules:
     end_analysis_bedtools,
     ribometh_score,
     count_junctions,
-    trim,
     query_sort,
     bam_to_bed,
     bedtools_overlap,
     bedtools_overlap_summary,
-    filter_bam
+    filter_bam,
+    parse_mpileup,
+    combine_mpileup
 
 rule all:
     input:
@@ -175,7 +180,7 @@ rule trim:
             )
     threads: 1
     resources:
-        runtime=63,
+        runtime=240,
         mem_mb=4000
     log:
         config["log_dir"] + '/trimming/{sample}.trimmomatic.log'
@@ -226,7 +231,7 @@ rule star_align:
         bam=paths['mapped'] + ".Aligned.out.bam",
     threads: 1
     resources:
-        runtime=lambda wildcards: 2400 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 200,
+        runtime=lambda wildcards: 240 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 2000,
         mem_mb=lambda wildcards: 16000 if config['runtime'].get(wildcards.reference, 'short') == 'short' else 48000,
     container: config['containers']['star']
     log:
@@ -266,7 +271,7 @@ rule filter_bam:
     log:
         config["log_dir"] + "/filter_bam_{reference}/{sample}.log"
     resources:
-        runtime=63,
+        runtime=240,
         mem_mb=4000
     container: config['containers']['samtools']
     shell:
@@ -569,6 +574,90 @@ rule freebayes:
             '-f {input.reference} '
             '-F 0.001 -X -C 1 --min-coverage 200 '
             '{input.bams} > {output}'
+
+def mpileup_reference(wildcards):
+    reference = config['star_ref_dirs'][wildcards.reference] + '.fa'
+    if 'freebayes_references' in config:
+        reference = config['freebayes_references'].get(wildcards.reference, reference)
+    return reference
+
+rule mpileup:
+    input:
+        bam=paths['mapped'] + ".aligned.sorted.bam",
+        reference=mpileup_reference,
+    output:
+        temp(paths['mpileup'])
+    container: config['containers']['samtools']
+    threads:
+        1
+    resources:
+        runtime=240,
+        mem_mb=8000
+    shell:
+        'samtools mpileup '
+            '-f {input.reference} '
+            '--no-BAQ -q 0 -Q 0 -d 1000000 -B '
+            '{input.bam} | gzip > {output}'
+
+rule parse_mpileup:
+    input:
+        paths['mpileup']
+    output:
+        paths['mpileup_parsed']
+    threads:
+        1
+    resources:
+        runtime=60,
+        mem_mb=2000
+    shell:
+        'python {scripts}/parse_mpileup.py --input {input} --output {output}'
+
+rule combine_mpileup:
+    input:
+        expand(paths['mpileup_parsed'], sample=samples, allow_missing=True)
+    output:
+        paths['mpileup_summary']
+    run:
+        import pandas as pd
+
+        threshold = config.get('min_mean_depth', 100)
+
+        dfs = []
+        for sample, path in zip(samples, input):
+            df = pd.read_csv(path, sep='\t')
+            df['sample'] = sample
+            dfs.append(df)
+
+        long = pd.concat(dfs, ignore_index=True)
+
+        # Pivot depth: rows=(chr,pos), cols=all samples, fill missing with 0
+        depth_pivot = long.pivot_table(
+            index=['chr', 'pos'], columns='sample',
+            values='depth', aggfunc='first', fill_value=0
+        )
+        # Ensure every expected sample is a column (handles empty TSVs)
+        depth_pivot = depth_pivot.reindex(columns=samples, fill_value=0)
+        mean_depth = depth_pivot.mean(axis=1)
+        passing_idx = mean_depth[mean_depth >= threshold].index
+
+        # Keep only rows belonging to passing sites
+        long_idx = long.set_index(['chr', 'pos'])
+        passing_long = long[long_idx.index.isin(passing_idx)]
+
+        # Build full (site x sample) template so every sample has a row per site
+        passing_sites = passing_long[['chr', 'pos', 'ref']].drop_duplicates()
+        template = passing_sites.merge(pd.DataFrame({'sample': list(samples)}), how='cross')
+
+        # Left-join actual data; fill zeros where a sample had no coverage
+        result = template.merge(
+            passing_long[['chr', 'pos', 'sample', 'depth', 'T_count', 'G_to_T_freq']],
+            on=['chr', 'pos', 'sample'],
+            how='left'
+        ).fillna({'depth': 0, 'T_count': 0, 'G_to_T_freq': 0.0})
+
+        result[['chr', 'pos', 'ref', 'depth', 'T_count', 'G_to_T_freq', 'sample']].to_csv(
+            output[0], sep='\t', index=False
+        )
 
 rule multiqc:
     input:
